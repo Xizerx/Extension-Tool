@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Integrate Helper",
+  "version": "1.0",
+  "description": "Auto Integrate Helper Browser Extension",
+  "permissions": ["storage", "tabs", "activeTab", "scripting","notifications"],
+  "host_permissions": ["https://online.autointegrate.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "AI Helper",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://online.autointegrate.com/EditRepairOrder?*", "https://online.autointegrate.com/RepairOrders/NewHistoric*", "https://online.autointegrate.com/RepairOrders/New*", "https://online.autointegrate.com/UserProfile*", "https://online.autointegrate.com/RepairOrderManager*"],
+      "js": [
+        "content/utils.js",
+        "content/approvalState.js",
+        "content/hoverTracker.js",
+        "content/notesTracker.js",
+        "content/cardTypeGuard.js",
+        "content/notifier.js",
+        "content/idleTracker.js",
+        "content/profileScraper.js",
+        "content/sessionRecorder.js",
+        "content/orphanedROGuard.js",
+        "content/replacementGuard.js",
+        "content/main.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "brand/Element-Logomark.gif",
+        "brand/EuclidCircularB-Regular.woff2",
+        "icons/Logomark_Color_Large.png",
+        "icons/Logomark_Color_Small.png",
+        "icons/Logomark_Color_Medium.png"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "icons/Logomark_Color_Medium.png",
+    "32": "icons/Logomark_Color_Small.png",
+    "128": "icons/Logomark_Color_Large.png"
+  }
+}
