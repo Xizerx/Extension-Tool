@@ -140,7 +140,21 @@ if (window.AIExt.__sessionRecorderLoaded) {
       const hover    = window.AIExt.hoverTracker?.getSnapshot?.() || {};
       const notes    = window.AIExt.notesTracker?.getSnapshot?.() || {};
       const idle     = window.AIExt.idleTracker?.getSnapshot?.() || {};
-      const orphaned = window.AIExt?.orphanedRO?.getSnapshot?.() || { orphaned_ro: 0 };
+      const orphanedSnap = window.AIExt?.orphanedRO?.getSnapshot?.() || {};
+      const orphanedBool =
+         typeof orphanedSnap.orphaned_ro === "boolean"
+           ? orphanedSnap.orphaned_ro
+           : orphanedSnap.orphaned_ro == null
+            ? null
+             : Boolean(orphanedSnap.orphaned_ro);
+      const partCost = window.AIExt.partCostTracker?.getSnapshot?.() || {};
+      const laborHrs = window.AIExt.laborHrsTracker?.getSnapshot?.() || {};
+      const similarRO = window.AIExt.similarRepairOrdersTracker?.getSnapshot?.() || {};
+      const vehiclePolicy =
+        window.AIExt.vehiclePolicyTracker?.getSnapshot?.() ||
+        window.AIExt.vehiclePolicy?.getSnapshot?.() ||
+        {};
+
 
       const row = {
         timestamp: new Date().toISOString(),
@@ -155,9 +169,34 @@ if (window.AIExt.__sessionRecorderLoaded) {
         notes_clicked: notes.clicked ?? null,
         notes_type: notes.type || "",
         notes_read_sec: notes.totalNoteHoverMs != null ? notes.totalNoteHoverMs / 1000 : null,
-        orphaned_ro: orphaned.orphaned_ro ?? null,
+        orphaned_ro: orphanedBool,
         first_work_delay_sec: idle.firstWorkDelaySec ?? null,
         idle_total_sec: idle.totalIdleSec ?? null,
+        // --- NEW: PART high-cost check snapshot (deduped by Service Code)
+        part_needs_check_count: partCost.needsCheckCount ?? null,
+        part_checked_count: partCost.checkedCount ?? null,
+
+        // --- NEW: LABOR high-hrs check snapshot (deduped by Service Code)
+        labor_needs_check_count: laborHrs.needsCheckCount ?? null,
+        labor_checked_count: laborHrs.checkedCount ?? null,
+          // NEW: Similar Repair Orders (SRO) metrics (per dialog open/session)
+  // --------------------------------------------------------------------
+        sro_total_similar_ros: similarRO.total_similar_ros ?? null,     // excludes excluded shops
+        sro_clicked_total: similarRO.clicked_total ?? null,             // includes repeat clicks
+        sro_clicked_unique: similarRO.clicked_unique ?? null,           // unique RO IDs clicked
+        sro_clicked_ro_ids: Array.isArray(similarRO.clicked_ro_ids)
+          ? similarRO.clicked_ro_ids.join("|")
+          : "",
+
+        // --------------------------------------------------------------------
+        // NEW: Vehicle Policy Tracker metrics
+        // --------------------------------------------------------------------
+        vehicle_policy_requires_scroll: vehiclePolicy.requires_scroll ?? null,
+        vehicle_policy_scrolled: vehiclePolicy.scrolled ?? null,
+        vehicle_policy_hover_sec:
+          vehiclePolicy.hover_ms != null ? vehiclePolicy.hover_ms / 1000 : null,
+        vehicle_policy_scroll_top: vehiclePolicy.scroll_top ?? null, // How deep did the agent scroll
+        vehicle_policy_max_scroll_top: vehiclePolicy.max_scroll_top ?? null, // How deep is the element itself
       };
 
 

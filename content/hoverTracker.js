@@ -5,6 +5,8 @@
 // - Uses approval state from approvalState.js; shows only UNAPPROVED items.
 // - FREEZES states at RO load; does NOT refresh when agent actions change UI.
 // - UNFREEZES and re-freezes only after URL change (new RO).
+// - Dedupes hover requirement by Service Code: if the Service Code is the same,
+//   hovering once counts for all instances of that Service Code.
 
 window.AIExt = window.AIExt || {};
 
@@ -43,31 +45,63 @@ window.AIExt = window.AIExt || {};
     return itemType || serviceCode || "";
   }
 
+  // ---------- Service Code grouping ----------
+  function serviceCodeForTriangle(tri) {
+    const container = containerForTriangle(tri);
+    return getField(container, "Service Code");
+  }
+  function serviceCodeKeyForTriangle(tri) {
+    const sc = serviceCodeForTriangle(tri);
+    // If Service Code is missing, fall back to label (keeps tracker functional)
+    if (!sc) return `__NO_SC__:${labelForTriangle(tri) || "Untitled item"}`;
+    return `SC:${sc}`;
+  }
+  function displayLabelForKey(key) {
+    if (key.startsWith("SC:")) return key.slice(3);
+    return key.replace(/^__NO_SC__:/, "");
+  }
+
   // ---------- internals ----------
   let onChange = null;
-  let panel = null, popover = null;
-  let cachedTriangles = [];
+  let panel = null,
+    popover = null;
 
-  // Per-triangle hover timing. We accumulate total dwell across visits.
-  // { total: ms, count: #completed hovers, startedAt: number|null }
-  let hoverData = new WeakMap();
+  // Cache triangles (UNAPPROVED only) + unique Service Code keys for this RO
+  let cachedTriangles = [];
+  let cachedKeys = [];
+
+  // Per-serviceCode hover timing & completion:
+  // key -> { total: ms, count: #completed hovers, startedAt: number|null, hovered: boolean }
+  let hoverDataByKey = new Map();
 
   // Track URL so we can detect SPA navigations.
   let lastURL = location.href;
 
-  function ensureHoverData(tri) {
-    let d = hoverData.get(tri);
-    if (!d) { d = { total: 0, count: 0, startedAt: null }; hoverData.set(tri, d); }
+  function ensureHoverDataByKey(key) {
+    let d = hoverDataByKey.get(key);
+    if (!d) {
+      d = { total: 0, count: 0, startedAt: null, hovered: false };
+      hoverDataByKey.set(key, d);
+    }
     return d;
   }
 
   function collectTriangles() {
-    cachedTriangles = qAll(TRIANGLE).filter(tri => {
+    const tris = qAll(TRIANGLE).filter((tri) => {
       const root = lineItemRoot(tri);
       const st = getApprovalState(root);
-      tri.setAttribute('data-approval', st);
+      tri.setAttribute("data-approval", st);
       return st === Approval.UNAPPROVED;
     });
+
+    cachedTriangles = tris;
+
+    const keySet = new Set();
+    for (const tri of tris) {
+      keySet.add(serviceCodeKeyForTriangle(tri));
+    }
+    cachedKeys = Array.from(keySet);
+
     return cachedTriangles;
   }
 
@@ -85,25 +119,34 @@ window.AIExt = window.AIExt || {};
   }
 
   function computeStats() {
-    const list = cachedTriangles.length ? cachedTriangles : collectTriangles();
-    const total = list.length;
-    const hovered = list.filter(t => t.getAttribute(HOVER_ATTR) === "1").length;
-    const percentage = total ? Math.round((hovered / total) * 100) : 0;
-    const unvisited = list
-      .filter(t => t.getAttribute(HOVER_ATTR) !== "1")
-      .map(t => labelForTriangle(t) || "Untitled item");
+    if (!cachedTriangles.length) collectTriangles();
 
-    // Average hover time per unique item
+    const total = cachedKeys.length;
+
+    let hovered = 0;
+    const unvisitedKeys = [];
+
+    for (const key of cachedKeys) {
+      const d = hoverDataByKey.get(key);
+      const isHovered = !!(d && d.hovered);
+      if (isHovered) hovered += 1;
+      else unvisitedKeys.push(key);
+    }
+
+    const percentage = total ? Math.round((hovered / total) * 100) : 0;
+
+    // Average hover time per unique Service Code key (only for keys present in current RO)
     let sumMs = 0;
     let itemCnt = 0;
-    for (const tri of list) {
-      const d = hoverData.get(tri);
-      if (d && d.total > 0) {
+    for (const [key, d] of hoverDataByKey.entries()) {
+      if (cachedKeys.includes(key) && d.total > 0) {
         sumMs += d.total;
         itemCnt += 1;
       }
     }
     const avgHoverMs = itemCnt ? Math.round(sumMs / itemCnt) : 0;
+
+    const unvisited = unvisitedKeys.map(displayLabelForKey);
 
     const stats = { total, hovered, percentage, unvisited, avgHoverMs };
 
@@ -117,8 +160,8 @@ window.AIExt = window.AIExt || {};
 
   function ensurePanel() {
     if (panel) return panel;
-    panel = document.createElement('div');
-    panel.id = 'ai-policy-progress';
+    panel = document.createElement("div");
+    panel.id = "ai-policy-progress";
     panel.style.cssText = `
       position: fixed; z-index: 2147483647; right: 12px; bottom: 12px;
       background: rgba(20,20,20,.92); color: #fff; font: 12px/1.3 system-ui,-apple-system,Segoe UI,Roboto,Arial;
@@ -136,21 +179,27 @@ window.AIExt = window.AIExt || {};
 
     // drag (simple)
     let drag = null;
-    panel.addEventListener('mousedown', (e) => {
-      drag = { sx: e.clientX, sy: e.clientY, right: parseInt(panel.style.right) || 12, bottom: parseInt(panel.style.bottom) || 12 };
+    panel.addEventListener("mousedown", (e) => {
+      drag = {
+        sx: e.clientX,
+        sy: e.clientY,
+        right: parseInt(panel.style.right) || 12,
+        bottom: parseInt(panel.style.bottom) || 12,
+      };
       e.preventDefault();
     });
-    window.addEventListener('mousemove', (e) => {
+    window.addEventListener("mousemove", (e) => {
       if (!drag) return;
-      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      const dx = e.clientX - drag.sx,
+        dy = e.clientY - drag.sy;
       panel.style.right = `${Math.max(0, drag.right - dx)}px`;
       panel.style.bottom = `${Math.max(0, drag.bottom - dy)}px`;
     });
-    window.addEventListener('mouseup', () => (drag = null));
+    window.addEventListener("mouseup", () => (drag = null));
 
     // popover hooks
-    panel.addEventListener('mouseenter', showPopover, { passive: true });
-    panel.addEventListener('mouseleave', hidePopover, { passive: true });
+    panel.addEventListener("mouseenter", showPopover, { passive: true });
+    panel.addEventListener("mouseleave", hidePopover, { passive: true });
 
     return panel;
   }
@@ -158,10 +207,10 @@ window.AIExt = window.AIExt || {};
   function updateChip(stats) {
     const { total, hovered, percentage } = stats;
     const el = ensurePanel();
-    el.querySelector('#ai-count').textContent = `${hovered} / ${total}`;
-    el.querySelector('#ai-percent').textContent = `${percentage}%`;
+    el.querySelector("#ai-count").textContent = `${hovered} / ${total}`;
+    el.querySelector("#ai-percent").textContent = `${percentage}%`;
 
-    const dot = el.querySelector('#ai-dot');
+    const dot = el.querySelector("#ai-dot");
     let bg = "#ef4444";
     if (percentage >= 90) bg = "#22c55e";
     else if (percentage >= 50) bg = "#f59e0b";
@@ -176,53 +225,71 @@ window.AIExt = window.AIExt || {};
   // ---------- delegated hover detection + timing ----------
   function installDelegatedHover() {
     // Start timing when entering triangle from outside it
-    document.addEventListener('mouseover', (e) => {
-      const tri = (e.target instanceof Element) ? e.target.closest(TRIANGLE) : null;
-      if (!tri) return;
+    document.addEventListener(
+      "mouseover",
+      (e) => {
+        const tri =
+          e.target instanceof Element ? e.target.closest(TRIANGLE) : null;
+        if (!tri) return;
 
-      const rel = (e.relatedTarget instanceof Element) ? e.relatedTarget : null;
-      if (rel && tri.contains(rel)) return; // still inside same element
+        const rel = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+        if (rel && tri.contains(rel)) return; // still inside same element
 
-      const d = ensureHoverData(tri);
-      if (d.startedAt == null) d.startedAt = performance.now();
+        const key = serviceCodeKeyForTriangle(tri);
+        const d = ensureHoverDataByKey(key);
+        if (d.startedAt == null) d.startedAt = performance.now();
 
-      // mark as hovered after minimal dwell
-      if (tri.getAttribute(HOVER_ATTR) !== '1') {
-        setTimeout(() => {
-          tri.setAttribute(HOVER_ATTR, '1');
+        // mark this Service Code as hovered after minimal dwell
+        if (!d.hovered) {
+          setTimeout(() => {
+            const dd = ensureHoverDataByKey(key);
+            dd.hovered = true;
+
+            // Optional: stamp hovered on the specific element for debugging
+            tri.setAttribute(HOVER_ATTR, "1");
+
+            const s = computeStats();
+            updateChip(s);
+            onChange?.(s);
+          }, DWELL_MS);
+        }
+      },
+      { passive: true, capture: true }
+    );
+
+    // Stop timing when leaving triangle to outside it
+    document.addEventListener(
+      "mouseout",
+      (e) => {
+        const tri =
+          e.target instanceof Element ? e.target.closest(TRIANGLE) : null;
+        if (!tri) return;
+
+        const to = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+        if (to && tri.contains(to)) return; // moving within same element
+
+        const key = serviceCodeKeyForTriangle(tri);
+        const d = ensureHoverDataByKey(key);
+
+        if (d.startedAt != null) {
+          const dur = performance.now() - d.startedAt;
+          d.total += dur; // accumulate time for this Service Code
+          d.count += 1;
+          d.startedAt = null;
+
           const s = computeStats();
           updateChip(s);
           onChange?.(s);
-        }, DWELL_MS);
-      }
-    }, { passive: true, capture: true });
-
-    // Stop timing when leaving triangle to outside it
-    document.addEventListener('mouseout', (e) => {
-      const tri = (e.target instanceof Element) ? e.target.closest(TRIANGLE) : null;
-      if (!tri) return;
-
-      const to = (e.relatedTarget instanceof Element) ? e.relatedTarget : null;
-      if (to && tri.contains(to)) return; // moving within same element
-
-      const d = ensureHoverData(tri);
-      if (d.startedAt != null) {
-        const dur = performance.now() - d.startedAt;
-        d.total += dur;  // stack time for this same item
-        d.count += 1;
-        d.startedAt = null;
-
-        const s = computeStats();
-        updateChip(s);
-        onChange?.(s);
-      }
-    }, { passive: true, capture: true });
+        }
+      },
+      { passive: true, capture: true }
+    );
   }
 
   // ---------- RO freeze handling ----------
   function uniqueRootsFromTriangles(tris) {
     const set = new Set();
-    tris.forEach(t => {
+    tris.forEach((t) => {
       const root = lineItemRoot(t);
       if (root) set.add(root);
     });
@@ -248,11 +315,18 @@ window.AIExt = window.AIExt || {};
 
     invalidateApprovalCache();
     cachedTriangles = [];
-    hoverData = new WeakMap();
+    cachedKeys = [];
+    hoverDataByKey = new Map();
     lastStats = null;
 
     // Reset UI chip immediately
-    updateChip({ total: 0, hovered: 0, percentage: 0, unvisited: [], avgHoverMs: 0 });
+    updateChip({
+      total: 0,
+      hovered: 0,
+      percentage: 0,
+      unvisited: [],
+      avgHoverMs: 0,
+    });
     hidePopover();
   }
 
@@ -277,8 +351,11 @@ window.AIExt = window.AIExt || {};
 
   // ---------- popover ----------
   function showPopover() {
-    if (popover && popover.isConnected) { buildPopover(popover); return; }
-    popover = document.createElement('div');
+    if (popover && popover.isConnected) {
+      buildPopover(popover);
+      return;
+    }
+    popover = document.createElement("div");
     popover.style.cssText = `
       position: fixed; z-index: 2147483647; max-width: 360px;
       right: ${parseInt(panel.style.right || 12)}px;
@@ -287,27 +364,46 @@ window.AIExt = window.AIExt || {};
       box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 10px 12px; font: 12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial;
       border: 1px solid rgba(255,255,255,.08);
     `;
-    popover.addEventListener('mouseleave', hidePopover, { passive: true });
+    popover.addEventListener("mouseleave", hidePopover, { passive: true });
     buildPopover(popover);
     document.documentElement.appendChild(popover);
   }
-  function hidePopover() { if (popover) { popover.remove(); popover = null; } }
+  function hidePopover() {
+    if (popover) {
+      popover.remove();
+      popover = null;
+    }
+  }
 
   function buildPopover(el) {
-    const list = cachedTriangles.length ? cachedTriangles : collectTriangles();
-    const unvisited = list.filter(t => t.getAttribute(HOVER_ATTR) !== '1');
-    const items = unvisited.map((t) => ({ tri: t, label: labelForTriangle(t) || "Untitled item" }));
+    if (!cachedTriangles.length) collectTriangles();
 
-    const summary = `<div style="opacity:.85;margin-bottom:8px;font-weight:600;">Remaining: ${items.length}</div>`;
+    const remainingKeys = cachedKeys.filter((key) => {
+      const d = hoverDataByKey.get(key);
+      return !(d && d.hovered);
+    });
+
+    const items = remainingKeys.map(displayLabelForKey);
+    const summary = `<div style="opacity:.85;margin-bottom:8px;font-weight:600;">Remaining Service Codes: ${items.length}</div>`;
+
     const html = items.length
       ? `<ul style="margin:0;padding:0;list-style:none;max-height:240px;overflow:auto;">
-          ${items.map(({ label }, idx) => `
+          ${items
+            .map(
+              (label, idx) => `
             <li data-idx="${idx}" style="padding:6px;border-radius:8px;margin:2px 0;display:flex;gap:8px;">
-              <span style="opacity:.65;min-width:1.5em;text-align:right;">${idx + 1}.</span>
-              <span style="flex:1 1 auto;word-break:break-word;">${escapeHtml(label)}</span>
-            </li>`).join("")}
+              <span style="opacity:.65;min-width:1.5em;text-align:right;">${
+                idx + 1
+              }.</span>
+              <span style="flex:1 1 auto;word-break:break-word;">${escapeHtml(
+                label
+              )}</span>
+            </li>`
+            )
+            .join("")}
         </ul>`
-      : `<div style="opacity:.9;">Nice! You’ve hovered everything.</div>`;
+      : `<div style="opacity:.9;">All Service Codes have been hovered.</div>`;
+
     el.innerHTML = summary + html;
   }
 
@@ -352,7 +448,11 @@ window.AIExt = window.AIExt || {};
       render();
       bootRetryUntilFound(); // will freeze once items are found
     },
-    refresh() { render(); },
-    getSnapshot() { return computeStats(); }
+    refresh() {
+      render();
+    },
+    getSnapshot() {
+      return computeStats();
+    },
   };
 })();

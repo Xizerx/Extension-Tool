@@ -25,6 +25,13 @@
         "content/sessionRecorder.js",
         "content/orphanedROGuard.js",
         "content/replacementGuard.js",
+        "content/clientInfoLinker.js",
+        "content/canadaGoogleparts.js",
+        "content/highDollarReject.js",
+        "content/partCostTracker.js",
+        "content/laborHrsTracker.js",
+        "content/vehiclePolicyTracker.js",
+        "content/similarRepairOrdersTracker.js",
         "content/main.js"
       ],
       "run_at": "document_idle",

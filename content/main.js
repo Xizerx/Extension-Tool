@@ -127,6 +127,15 @@
   AIExt.sessionRecorder.init();
   AIExt.orphanedRO.init();
   AIExt.replacementGuard.init();
+  AIExt.canadaGoogleParts.init();
+  AIExt.clientInfoLinker?.init?.();
+  AIExt.highDollarReject.init();
+  AIExt.partCostTracker.init();
+  AIExt.laborHrsTracker.init();
+  AIExt.vehiclePolicyTracker.init();
+  AIExt.similarRepairOrdersTracker.init();
+
+
 
   console.log("[AI Helper] content loaded", location.href);
 })();
