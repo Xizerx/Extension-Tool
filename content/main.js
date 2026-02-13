@@ -129,11 +129,12 @@
   AIExt.replacementGuard.init();
   AIExt.canadaGoogleParts.init();
   AIExt.clientInfoLinker?.init?.();
-  AIExt.highDollarReject.init();
   AIExt.partCostTracker.init();
   AIExt.laborHrsTracker.init();
   AIExt.vehiclePolicyTracker.init();
   AIExt.similarRepairOrdersTracker.init();
+  AIExt.highDollarReject.start();
+  AIExt.fedexGuard.init();
 
 
 

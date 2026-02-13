@@ -1,131 +1,67 @@
-// content/highDollarReject.js
+// content/highDollarRejectGuard.js
+// High-dollar Reject interstitial for line items > $20,000
+// Robust selection with delay + retry for native <select> and MUI menus
+
 window.AIExt = window.AIExt || {};
 
 (function () {
-  const FEATURE = "HighDollarReject";
+  const OVERLAY_ID = "high-dollar-reject-overlay";
+  const THRESHOLD = 20000;
 
-  const RO_URL_RE = /https:\/\/online\.autointegrate\.com\/EditRepairOrder\?/i;
-  const HIGH_DOLLAR_THRESHOLD = 20000;
+  let _bypassOnce = false;
 
-  // React bundle root exists on this page; we scan within it.
-  const ROOT_SELECTOR = "#Cnt_reactRepairOrderBundle";
-
-  // Scan Typography nodes inside the React root and parse currency from them.
-  const MONEY_NODE_SELECTOR = `${ROOT_SELECTOR} span.MuiTypography-root`;
-
-  const INPUT_ERROR_MESSAGE =
-    "It appears this dollar amount was entered in error, please review and adjust the dollar amount and resubmit. Thank you.";
-
-  // Visual theme (match replacementGuard vibe)
-  const THEME_COLOR = "#F59E0B";
-  const OVERLAY_ID = "aiext-high-dollar-reject-overlay";
-
-  // NEW: reliable selector for Cost Saving checkbox
-  const COST_SAVING_SELECTOR = "#isCostSaving";
-
-  let didLogInit = false;
-  let didLogDetection = false;
-  let didLogSummary = false;
-
-  /* ============================
-     Logging
-  ============================ */
-
-  function logInitOnce() {
-    if (didLogInit) return;
-    console.log(`[${FEATURE}]`, {
-      initiated: true,
-      url: location.href,
-      isROPage: RO_URL_RE.test(location.href),
-      rootPresent: !!document.querySelector(ROOT_SELECTOR),
-      moneySelector: MONEY_NODE_SELECTOR,
-      threshold: HIGH_DOLLAR_THRESHOLD,
-      costSavingSelector: COST_SAVING_SELECTOR,
-    });
-    didLogInit = true;
+  function parseMoney(text) {
+    if (!text) return NaN;
+    const cleaned = String(text).replace(/[^\d.-]/g, "");
+    return Number(cleaned);
   }
 
-  function logDetectionOnce(ctx) {
-    if (didLogDetection) return;
-    console.log(`[${FEATURE}]`, {
-      highDollarDetected: !!ctx,
-      detectedTotalCost: ctx?.totalCost ?? null,
-      detectedRawText: ctx?.rawText ?? null,
-      detectedNodeText: ctx?.nodeText ?? null,
-      threshold: HIGH_DOLLAR_THRESHOLD,
-    });
-    didLogDetection = true;
-  }
-
-  function logSummaryOnce(agentSelection, ctx) {
-    if (didLogSummary) return;
-    console.log(`[${FEATURE}]`, {
-      enabled: true,
-      detectedTotalCost: ctx?.totalCost ?? null,
-      detectedRawText: ctx?.rawText ?? null,
-      agentSelection, // "Invalid" | "Valid"
-    });
-    didLogSummary = true;
-  }
-
-  /* ============================
-     Helpers
-  ============================ */
-
-  function parseCurrency(text) {
-    if (!text) return 0;
-    const n = parseFloat(String(text).replace(/[^0-9.]/g, ""));
-    return Number.isFinite(n) ? n : 0;
-  }
-
-  function detectHighDollarLineItem() {
-    const root = document.querySelector(ROOT_SELECTOR);
-    if (!root) {
-      console.warn(`[${FEATURE}]`, { reason: "React root not found", selector: ROOT_SELECTOR });
-      return null;
-    }
-
-    const nodes = Array.from(root.querySelectorAll(MONEY_NODE_SELECTOR));
-    if (!nodes.length) {
-      console.warn(`[${FEATURE}]`, { reason: "No money nodes found", selector: MONEY_NODE_SELECTOR });
-      return null;
-    }
-
-    let best = null;
-
-    for (const node of nodes) {
-      const nodeText = (node.innerText || node.textContent || "").trim();
-      if (!nodeText) continue;
-
-      if (!/\$/.test(nodeText) && !/CA\$/i.test(nodeText)) continue;
-
-      const value = parseCurrency(nodeText);
-      if (value <= 0) continue;
-
-      if (!best || value > best.totalCost) {
-        best = {
-          totalCost: value,
-          rawText: nodeText,
-          nodeText,
-        };
-      }
-    }
-
-    if (best && best.totalCost > HIGH_DOLLAR_THRESHOLD) return best;
+  function findRejectButtonFromEventTarget(target) {
+    const btn = target?.closest?.("button");
+    if (!btn) return null;
+    const t = (btn.textContent || "").trim();
+    if (/^reject$/i.test(t) || /\breject\b/i.test(t)) return btn;
+    const span = btn.querySelector("span");
+    if (span && /^reject$/i.test((span.textContent || "").trim())) return btn;
     return null;
   }
 
-  function getRejectReasonSelect() {
-    return document.querySelector("select");
+  function findLineItemScope(rejectBtn) {
+    return (
+      rejectBtn.closest('.MuiPaper-root, .MuiCard-root, [aria-label="Details"], section, article') ||
+      rejectBtn.closest("div") ||
+      document
+    );
   }
 
-  function getNotesTextarea() {
-    return document.querySelector("textarea");
+  function readLineItemTotal(scope) {
+    const el =
+      scope.querySelector('span[aria-describedby*="totalCost"]') ||
+      scope.querySelector('span[aria-describedby$="__totalCost"]') ||
+      Array.from(scope.querySelectorAll("span,div")).find(n => /\$\s*\d/.test(n.textContent || ""));
+    return el ? parseMoney(el.textContent) : NaN;
   }
 
-  // NEW: direct lookup for Cost Saving checkbox
-  function getCostSavingCheckbox() {
-    return document.querySelector(COST_SAVING_SELECTOR);
+  function isCostSavingsChecked() {
+    const cb = document.querySelector('input#isCostSaving[type="checkbox"]');
+    return !!cb && !!cb.checked;
+  }
+
+  function setCostSavingsChecked(checked) {
+    const cb = document.querySelector('input#isCostSaving[type="checkbox"]');
+    if (!cb) return false;
+    if (cb.checked === !!checked) return true;
+    try {
+      cb.click();
+      cb.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      cb.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      return cb.checked === !!checked;
+    } catch (err) {
+      cb.checked = !!checked;
+      cb.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      cb.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      return cb.checked === !!checked;
+    }
   }
 
   function removeOverlay() {
@@ -133,11 +69,7 @@ window.AIExt = window.AIExt || {};
     if (el) el.remove();
   }
 
-  /* ============================
-     Overlay UI
-  ============================ */
-
-  function createOverlay({ title, lines, onValid, onInvalid }) {
+  function createOverlay({ title, html, onValid, onInputError }) {
     removeOverlay();
 
     const overlay = document.createElement("div");
@@ -152,7 +84,7 @@ window.AIExt = window.AIExt || {};
       width: "100vw",
       height: "100vh",
       backgroundColor: "rgba(0,0,0,0.85)",
-      zIndex: 99999,
+      zIndex: 100000,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -161,244 +93,352 @@ window.AIExt = window.AIExt || {};
     const panel = document.createElement("div");
     Object.assign(panel.style, {
       background: "white",
-      border: `8px solid ${THEME_COLOR}`,
+      border: "8px solid #DC2626",
       borderRadius: "14px",
-      padding: "40px",
-      textAlign: "center",
-      maxWidth: "760px",
-      width: "min(92vw, 760px)",
-      boxShadow: `0 0 40px ${THEME_COLOR}`,
-      fontFamily:
-        "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+      padding: "34px",
+      textAlign: "left",
+      maxWidth: "780px",
+      width: "min(94vw, 780px)",
+      boxShadow: "0 0 40px rgba(220,38,38,0.7)",
+      fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
     });
-
-    const iconWrap = document.createElement("div");
-    iconWrap.style.marginBottom = "18px";
-    iconWrap.innerHTML = `
-      <svg width="140" height="140" viewBox="0 0 120 110" aria-hidden="true">
-        <polygon points="60,5 115,105 5,105" fill="${THEME_COLOR}" stroke="${THEME_COLOR}" stroke-width="2"></polygon>
-        <rect x="55" y="32" width="10" height="40" fill="white" rx="2"></rect>
-        <circle cx="60" cy="83" r="6" fill="white"></circle>
-      </svg>
-    `;
 
     const h1 = document.createElement("h1");
     h1.textContent = title;
     Object.assign(h1.style, {
-      fontSize: "28px",
-      margin: "0 0 10px",
-      color: THEME_COLOR,
-      letterSpacing: "0.5px",
+      fontSize: "22px",
+      margin: "0 0 12px",
+      color: "#DC2626",
+      letterSpacing: "0.2px",
     });
 
-    const desc = document.createElement("div");
-    desc.innerHTML = lines
-      .map(
-        (l) =>
-          `<p style="margin:8px 0;font-size:18px;line-height:1.45;color:#111">${l}</p>`
-      )
-      .join("");
+    const body = document.createElement("div");
+    body.innerHTML = html;
 
-    const btnRow = document.createElement("div");
-    Object.assign(btnRow.style, {
-      marginTop: "22px",
+    const actions = document.createElement("div");
+    Object.assign(actions.style, {
       display: "flex",
-      justifyContent: "center",
       gap: "12px",
-      flexWrap: "wrap",
+      justifyContent: "flex-end",
+      marginTop: "20px",
     });
 
-    const btnValid = document.createElement("button");
-    btnValid.type = "button";
-    btnValid.textContent = "Valid";
-    Object.assign(btnValid.style, {
-      backgroundColor: "white",
-      color: "#111",
-      fontSize: "18px",
-      border: `2px solid ${THEME_COLOR}`,
-      padding: "12px 28px",
-      borderRadius: "8px",
-      cursor: "pointer",
-      boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-      minWidth: "140px",
-    });
+    const mkBtn = (label, bg, onClick) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      Object.assign(b.style, {
+        backgroundColor: bg,
+        color: "white",
+        fontSize: "16px",
+        border: "none",
+        padding: "10px 18px",
+        borderRadius: "8px",
+        cursor: "pointer",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+      });
+      b.addEventListener("click", () => {
+        try { onClick && onClick(); } finally { removeOverlay(); }
+      });
+      return b;
+    };
 
-    const btnInvalid = document.createElement("button");
-    btnInvalid.type = "button";
-    btnInvalid.textContent = "Invalid";
-    Object.assign(btnInvalid.style, {
-      backgroundColor: THEME_COLOR,
-      color: "white",
-      fontSize: "18px",
-      border: "none",
-      padding: "12px 28px",
-      borderRadius: "8px",
-      cursor: "pointer",
-      boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-      minWidth: "160px",
-    });
+    const validBtn = mkBtn("Valid", "#16A34A", onValid);
+    const inputErrBtn = mkBtn("Input Error", "#DC2626", onInputError);
 
-    btnValid.addEventListener("click", () => {
-      try { onValid && onValid(); } catch (_) {}
-      try { overlay.remove(); } catch (_) {}
-    });
+    actions.appendChild(inputErrBtn);
+    actions.appendChild(validBtn);
 
-    btnInvalid.addEventListener("click", () => {
-      try { onInvalid && onInvalid(); } catch (_) {}
-      try { overlay.remove(); } catch (_) {}
-    });
-
-    btnRow.appendChild(btnValid);
-    btnRow.appendChild(btnInvalid);
-
-    panel.appendChild(iconWrap);
     panel.appendChild(h1);
-    panel.appendChild(desc);
-    panel.appendChild(btnRow);
+    panel.appendChild(body);
+    panel.appendChild(actions);
     overlay.appendChild(panel);
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        // no-op
-      }
-    });
-
     document.body.appendChild(overlay);
+
+    inputErrBtn.focus();
   }
 
-  /* ============================
-     Invalid Automation
-  ============================ */
+  function waitFor(predicate, { timeoutMs = 6000, intervalMs = 100 } = {}) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const t = setInterval(() => {
+        let ok = false;
+        try { ok = !!predicate(); } catch (_) {}
+        if (ok) { clearInterval(t); resolve(true); return; }
+        if (Date.now() - start > timeoutMs) { clearInterval(t); resolve(false); }
+      }, intervalMs);
+    });
+  }
 
-  function applyInvalid() {
-    const reason = getRejectReasonSelect();
-    const notes = getNotesTextarea();
-    const costSaving = getCostSavingCheckbox();
+  // small sleep helper
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
-    if (reason) {
-      const opt = Array.from(reason.options || []).find(
-        (o) => (o.textContent || "").trim() === "Other"
-      );
-      if (opt) {
-        reason.value = opt.value;
-        reason.dispatchEvent(new Event("change", { bubbles: true }));
+  // Try to set native <select> by text; with robust fallbacks (value and index).
+  // This function will wait for options to be populated (up to optionsTimeoutMs).
+  async function setNativeSelectByText(selectEl, matcher, { optionsTimeoutMs = 2000 } = {}) {
+    if (!selectEl) return false;
+
+    // wait for options to populate
+    const ok = await waitFor(() => (selectEl.options && selectEl.options.length > 0), { timeoutMs: optionsTimeoutMs, intervalMs: 100 });
+    if (!ok) {
+      console.debug("[HighDollarRejectGuard] native select has no options after wait", selectEl);
+      // continue anyway - maybe options exist but length is 0 in this DOM; we'll still try
+    }
+
+    const opts = Array.from(selectEl.options || []);
+
+    // 1) substring match (case-insensitive) using matcher function
+    let target = opts.find(o => matcher((o.textContent || "").trim()));
+    // 2) try exact trimmed text match (if matcher provided as string, handled by caller)
+    if (!target) {
+      target = opts.find(o => /(^|\s)other(\b|:)/i.test((o.textContent || "").trim()));
+    }
+    // 3) try known value fallback "6"
+    if (!target) {
+      target = opts.find(o => String((o.value || "")).trim() === "6");
+    }
+    // 4) try nth-child index 13 -> index 12
+    if (!target && opts.length >= 13) {
+      target = opts[12];
+    }
+
+    if (!target) {
+      console.debug("[HighDollarRejectGuard] setNativeSelectByText: no matching option found", selectEl, opts.map(o => ({ v: o.value, t: o.textContent })));
+      return false;
+    }
+
+    if (selectEl.value !== target.value) {
+      selectEl.value = target.value;
+      selectEl.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      selectEl.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    }
+    console.debug("[HighDollarRejectGuard] setNativeSelectByText: selected option", target.value, (target.textContent||"").trim());
+    return true;
+  }
+
+  // Open MUI combobox and click target option; waits & retries for menu to render.
+  async function chooseMUISelectOption(dialog, matcher, { maxRetries = 6, retryDelayMs = 250 } = {}) {
+    // look for a combobox trigger in dialog first, then globally
+    const trigger =
+      (dialog && (dialog.querySelector('[role="combobox"]') || dialog.querySelector('[aria-haspopup="listbox"]'))) ||
+      document.querySelector('[role="combobox"], [aria-haspopup="listbox"], .MuiSelect-root, button[aria-haspopup="listbox"]');
+
+    if (!trigger) {
+      console.debug("[HighDollarRejectGuard] chooseMUISelectOption: no trigger found");
+      return false;
+    }
+
+    // attempt open
+    try { trigger.click(); } catch (e) { /* ignore */ }
+
+    // retry loop: wait for menu to appear and for option to be clickable
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // find menu (menu may be appended to body via portal)
+      const menu = document.querySelector('[role="listbox"], .MuiList-root, .MuiMenu-list');
+      if (menu) {
+        // gather candidate nodes
+        const candidateNodes = Array.from(menu.querySelectorAll('li, div[role="option"], button, span, .MuiMenuItem-root'))
+          .filter(n => (n.textContent || "").trim().length > 0);
+
+        const target = candidateNodes.find(n => matcher((n.textContent || "").trim()));
+        if (target) {
+          try {
+            target.scrollIntoView({ block: 'center' });
+            target.click();
+            console.debug("[HighDollarRejectGuard] chooseMUISelectOption: clicked target", (target.textContent||"").trim());
+            // ensure input/change events
+            try {
+              trigger.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+              trigger.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+            } catch (e) {}
+            return true;
+          } catch (err) {
+            try {
+              target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              return true;
+            } catch (ee) {}
+          }
+        }
+      }
+      // not found yet; wait and retry
+      await sleep(retryDelayMs);
+    }
+
+    console.debug("[HighDollarRejectGuard] chooseMUISelectOption: failed after retries");
+    return false;
+  }
+
+  // Generic helper that attempts native select first, then MUI-style select, with retries/delays.
+  async function setSelectToOptionText(selectElOrContainer, matcher, { overallRetries = 3, retryDelayMs = 200 } = {}) {
+    // normalize matcher to function
+    let matcherFn = matcher;
+    if (typeof matcher === "string") matcherFn = txt => (txt || "").toLowerCase().includes(matcher.toLowerCase());
+    if (typeof matcherFn !== "function") matcherFn = txt => /\bother\b/i.test(txt);
+
+    for (let attempt = 0; attempt < overallRetries; attempt++) {
+      // 1) if a select element was passed
+      if (selectElOrContainer && selectElOrContainer.tagName === "SELECT") {
+        const ok = await setNativeSelectByText(selectElOrContainer, matcherFn, { optionsTimeoutMs: 1500 });
+        if (ok) return true;
+      }
+
+      const container = (selectElOrContainer && selectElOrContainer.nodeType) ? selectElOrContainer : document;
+
+      // 2) try to find native select by id or other selectors
+      const native = container.querySelector('select#roItemRejectionReasonId, select[id*="RejectionReason"], select');
+      if (native) {
+        const ok = await setNativeSelectByText(native, matcherFn, { optionsTimeoutMs: 1500 });
+        if (ok) return true;
+      }
+
+      // 3) try MUI-style select
+      const okMui = await chooseMUISelectOption(container, matcherFn, { maxRetries: 8, retryDelayMs: 300 });
+      if (okMui) return true;
+
+      // 4) try direct option-like clicks inside container
+      const directOpts = Array.from(container.querySelectorAll('li, div[role="option"], button, .MuiMenuItem-root'))
+        .filter(n => (n.textContent || "").trim().length > 0);
+      const directTarget = directOpts.find(n => matcherFn((n.textContent || "").trim()));
+      if (directTarget) {
+        try { directTarget.click(); } catch (e) {
+          try { directTarget.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch (ee) {}
+        }
+        console.debug("[HighDollarRejectGuard] setSelectToOptionText: direct option clicked", (directTarget.textContent||"").trim());
+        return true;
+      }
+
+      // nothing yet -> wait a bit and retry
+      await sleep(retryDelayMs);
+    }
+
+    console.debug("[HighDollarRejectGuard] setSelectToOptionText: all retries exhausted");
+    return false;
+  }
+
+  function fillTextField(el, value) {
+    if (!el) return false;
+    try {
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+        el.focus && el.focus();
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        el.blur && el.blur();
+        return true;
       } else {
-        console.warn(`[${FEATURE}]`, { reason: "Could not find 'Other' option in select" });
+        el.textContent = value;
+        el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        return true;
       }
-    } else {
-      console.warn(`[${FEATURE}]`, { reason: "Reject reason <select> not found" });
+    } catch (err) {
+      return false;
     }
-
-    if (notes) {
-      notes.value = INPUT_ERROR_MESSAGE;
-      notes.dispatchEvent(new Event("input", { bubbles: true }));
-    } else {
-      console.warn(`[${FEATURE}]`, { reason: "Notes <textarea> not found" });
-    }
-
-    // IMPORTANT: uncheck Cost Saving reliably
-    if (costSaving) {
-      const wasChecked = !!costSaving.checked;
-
-      // Prefer click() if currently checked, to ensure any handlers run.
-      if (wasChecked) {
-        costSaving.click();
-      }
-
-      // Hard-set as a backstop, then emit events (some UIs depend on these).
-      costSaving.checked = false;
-      costSaving.dispatchEvent(new Event("change", { bubbles: true }));
-      costSaving.dispatchEvent(new Event("input", { bubbles: true }));
-
-      console.log(`[${FEATURE}]`, {
-        costSaving: { selector: COST_SAVING_SELECTOR, wasChecked, nowChecked: !!costSaving.checked },
-      });
-    } else {
-      console.warn(`[${FEATURE}]`, {
-        reason: "Cost Saving checkbox not found",
-        selector: COST_SAVING_SELECTOR,
-      });
-    }
-
-    console.log(`[${FEATURE}]`, { invalidApplied: true });
   }
 
-  /* ============================
-     Reject Click Intercept
-  ============================ */
+  function findRejectDialog() {
+    return document.querySelector('div[role="dialog"]') || null;
+  }
 
-  function handleClickCapture(e) {
-    const btn = e.target && e.target.closest ? e.target.closest("button") : null;
-    if (!btn) return;
+  function findDialogRejectSubmitButton(dialog) {
+    if (!dialog) return null;
+    const btns = Array.from(dialog.querySelectorAll("button"));
+    return btns.find(b => /^reject$/i.test((b.textContent || "").trim())) || null;
+  }
 
-    const label = (btn.innerText || btn.textContent || "").trim();
-    if (!label) return;
+  async function applyInputErrorAutomation() {
+    // Wait for rejection modal to appear with controls
+    const ok = await waitFor(() => {
+      const d = findRejectDialog();
+      return !!(d && d.querySelector("select, textarea, input, [role='combobox'], [aria-haspopup='listbox']"));
+    }, { timeoutMs: 6000 });
 
-    // Only react to Reject clicks.
-    if (!/^\s*reject\s*$/i.test(label) && !/\breject\b/i.test(label)) return;
+    if (!ok) {
+      console.debug("[HighDollarRejectGuard] applyInputErrorAutomation: dialog didn't appear in time");
+      return;
+    }
 
-    console.log(`[${FEATURE}]`, {
-      event: "reject_click",
-      buttonText: label,
-      url: location.href,
-      isROPage: RO_URL_RE.test(location.href),
+    const dialog = findRejectDialog();
+    if (!dialog) return;
+
+    // 1) Set Reason to Other - with retries and delays. This will:
+    //    - try native select (roItemRejectionReasonId) and wait for options
+    //    - try MUI combobox menu selection
+    //    - try value="6" / nth-child fallback internally
+    const selected = await setSelectToOptionText(dialog, txt => /\bother\b/i.test(txt), { overallRetries: 4, retryDelayMs: 250 });
+    console.debug("[HighDollarRejectGuard] applyInputErrorAutomation: reason selected?", selected);
+
+    // 2) Prefill message (textarea or input)
+    const msg =
+      dialog.querySelector("textarea#roItemRejectionNotes") ||
+      dialog.querySelector("textarea") ||
+      dialog.querySelector('input[type="text"], input[type="search"], input[role="textbox"]');
+
+    fillTextField(
+      msg,
+      "It appears this dollar amount was entered in error, please review and adjust the dollar amount and resubmit. Thank you."
+    );
+
+    // 3) Uncheck cost savings
+    setCostSavingsChecked(false);
+
+    // Note: Auto-submit left commented. Uncomment if desired.
+    // const submitBtn = findDialogRejectSubmitButton(dialog);
+    // if (submitBtn) submitBtn.click();
+  }
+
+  function onDocumentClickCapture(e) {
+    if (_bypassOnce) return;
+    const rejectBtn = findRejectButtonFromEventTarget(e.target);
+    if (!rejectBtn) return;
+    const scope = findLineItemScope(rejectBtn);
+    const total = readLineItemTotal(scope);
+    if (!Number.isFinite(total) || total <= THRESHOLD) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+
+    createOverlay({
+      title: "High Dollar Reject Confirmation",
+      html: `
+        <div style="font-size:16px;line-height:1.45;color:#111">
+          <p style="margin:0 0 10px">
+            You are rejecting a line item over <b>$20,000</b>.
+          </p>
+          <p style="margin:0 0 10px">
+            If this is due to an input error or another reason that would disqualify it from being a legitimate cost savings to the client, click <b>Input Error</b>.
+            If it is a valid cost savings, click <b>Valid</b>.
+          </p>
+          <p style="margin:0;color:#444">
+            Detected total: <b>$${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
+            ${isCostSavingsChecked() ? " • Cost Savings is currently <b>checked</b>." : ""}
+          </p>
+        </div>
+      `,
+      onValid: () => {
+        _bypassOnce = true;
+        try { rejectBtn.click(); } finally { _bypassOnce = false; }
+      },
+      onInputError: async () => {
+        _bypassOnce = true;
+        try { rejectBtn.click(); } finally { _bypassOnce = false; }
+        await applyInputErrorAutomation();
+      },
     });
-
-    if (!RO_URL_RE.test(location.href)) return;
-
-    setTimeout(() => {
-      const ctx = detectHighDollarLineItem();
-      logDetectionOnce(ctx);
-
-      if (!ctx) {
-        console.warn(`[${FEATURE}]`, { event: "no_high_dollar_detected_on_reject" });
-        return;
-      }
-
-      createOverlay({
-        title: "HIGH DOLLAR REJECTION — CONFIRM",
-        lines: [
-          `You are rejecting a line item over <b>$20,000</b>.`,
-          `Detected amount: <b>${ctx.rawText}</b>.`,
-          `If this is invalid due to an input error or another reason that would disqualify it from being a legitimate cost savings to the client, click <b>Invalid</b>.`,
-          `If it is a valid cost savings, click <b>Valid</b>.`,
-        ],
-        onValid: () => {
-          logSummaryOnce("Valid", ctx);
-        },
-        onInvalid: () => {
-          applyInvalid();
-          logSummaryOnce("Invalid", ctx);
-        },
-      });
-    }, 350);
   }
 
-  /* ============================
-     Init
-  ============================ */
-
-  function init() {
-    logInitOnce();
-
-    document.addEventListener("click", handleClickCapture, true);
-
-    console.log(`[${FEATURE}]`, {
-      listenerAttached: true,
-      capture: true,
-    });
-
-    // SPA re-hydration can cause DOM to load later; we log a short readiness probe.
-    let tries = 0;
-    const t = setInterval(() => {
-      tries++;
-      const rootPresent = !!document.querySelector(ROOT_SELECTOR);
-      if (tries === 1 || tries === 6 || tries === 12) {
-        console.log(`[${FEATURE}]`, { probe: true, tries, rootPresent });
-      }
-      if (rootPresent || tries >= 12) clearInterval(t);
-    }, 250);
+  function start() {
+    document.addEventListener("click", onDocumentClickCapture, true);
+    console.log("[HighDollarRejectGuard] Started.");
   }
 
-  window.AIExt.highDollarReject = { init };
+  function stop() {
+    document.removeEventListener("click", onDocumentClickCapture, true);
+    removeOverlay();
+    console.log("[HighDollarRejectGuard] Stopped.");
+  }
+
+  AIExt.highDollarReject = { start, stop };
 })();

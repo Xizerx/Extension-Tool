@@ -14,7 +14,8 @@ window.AIExt = window.AIExt || {};
     '#pageSidePanelLeft section[aria-label="Vehicle Policy Highlights"]';
   const VPH_FALLBACK_SELECTOR = "#pageSidePanelLeft > div";
 
-  let cachedClientNo = "";
+  // We now cache the FULL client code token, e.g. "FA9500"
+  let cachedClientCode = "";
   let rawClientText = "";
   let finalUrl = "";
   let didLogSummary = false;
@@ -25,11 +26,13 @@ window.AIExt = window.AIExt || {};
     return (s || "").replace(/\s+/g, " ").trim();
   }
 
-  function extractClientDigits(raw) {
-    const m = String(raw || "")
-      .toUpperCase()
-      .match(/\b(?:FA|CA)?\s*[-:]?\s*(\d{3,})\b/);
-    return m ? m[1] : "";
+  // Normalize anything like:
+  // "FA 9500" / "FA-9500" / "fa:9500" -> "FA9500"
+  // "9500" (no prefix) -> "" (we require prefix per your requirement)
+  function normalizeClientCode(raw) {
+    const t = String(raw || "").toUpperCase();
+    const m = t.match(/\b(FA|CA)\s*[-:]?\s*(\d{3,})\b/);
+    return m ? `${m[1]}${m[2]}` : "";
   }
 
   function getCurrentRoKey() {
@@ -40,7 +43,7 @@ window.AIExt = window.AIExt || {};
     const k = getCurrentRoKey();
     if (k !== roKey) {
       roKey = k;
-      cachedClientNo = "";
+      cachedClientCode = "";
       rawClientText = "";
       finalUrl = "";
       clickedClientTabOnce = false;
@@ -58,7 +61,7 @@ window.AIExt = window.AIExt || {};
   function findTabByText(re) {
     return Array.from(
       document.querySelectorAll('button[role="tab"],[role="tab"]')
-    ).find(t => re.test(norm(t.textContent || "")));
+    ).find((t) => re.test(norm(t.textContent || "")));
   }
 
   function isTabActive(tab) {
@@ -76,41 +79,49 @@ window.AIExt = window.AIExt || {};
   function goToVehicleDetails() {
     const tab = findTabByText(/vehicle\s*details/i);
     if (tab && !isTabActive(tab)) {
-      try { tab.click(); } catch {}
+      try {
+        tab.click();
+      } catch {}
     }
   }
 
   function parseClient(panel) {
     const text = panel?.innerText || "";
     const m = text.match(
-      /corp\s*\/\s*client\s*number[\s\S]{0,80}?((?:FA|CA)?[-:\s]*\d{3,})/i
+      /corp\s*\/\s*client\s*number[\s\S]{0,120}?((?:FA|CA)\s*[-:\s]*\d{3,})/i
     );
     if (!m) return "";
 
     rawClientText = m[1];
-    return extractClientDigits(m[1]);
+    return normalizeClientCode(m[1]); // => "FA9500"
   }
 
   function attemptClientCapture() {
-    if (cachedClientNo) return;
+    if (cachedClientCode) return;
 
     const clientTab = findTabByText(/client\s*details/i);
     if (!clientTab) return;
 
     if (!isTabActive(clientTab) && !clickedClientTabOnce) {
       clickedClientTabOnce = true;
-      try { clientTab.click(); } catch {}
+      try {
+        clientTab.click();
+      } catch {}
       return;
     }
 
     const panel = getTabPanel(clientTab);
     if (!panel) return;
 
-    const parsed = parseClient(panel);
-    if (!parsed) return;
+    const parsedCode = parseClient(panel);
+    if (!parsedCode) return;
 
-    cachedClientNo = parsed;
-    finalUrl = `${BASE}${encodeURIComponent(parsed)}`;
+    cachedClientCode = parsedCode;
+
+    // IMPORTANT: policy site expects cli_no digits in your existing code.
+    // We keep that behavior, but now derive digits from the full code.
+    const digits = parsedCode.replace(/^(FA|CA)/, "");
+    finalUrl = `${BASE}${encodeURIComponent(digits)}`;
 
     goToVehicleDetails();
   }
@@ -149,7 +160,7 @@ window.AIExt = window.AIExt || {};
 
     const a = wrap.querySelector("a");
 
-    if (cachedClientNo) {
+    if (cachedClientCode) {
       a.href = finalUrl;
       a.style.pointerEvents = "auto";
       a.style.opacity = "1";
@@ -158,7 +169,7 @@ window.AIExt = window.AIExt || {};
         console.log(`[${FEATURE}]`, {
           enabled: true,
           originalClientId: rawClientText,
-          parsedClientId: cachedClientNo,
+          parsedClientCode: cachedClientCode, // "FA9500"
           finalUrl,
         });
         didLogSummary = true;
@@ -178,5 +189,15 @@ window.AIExt = window.AIExt || {};
 
   setTimeout(start, START_DELAY_MS);
 
-  window.AIExt.clientInfoLinker = { init: start };
+  // Export full client code for FedexGuard (and others)
+  window.AIExt.clientInfoLinker = {
+    init: start,
+
+    // Full code, e.g. "FA9500"
+    getClientCode: () => cachedClientCode || "",
+
+    // Debug helpers
+    getRawClientText: () => rawClientText || "",
+    getFinalUrl: () => finalUrl || "",
+  };
 })();

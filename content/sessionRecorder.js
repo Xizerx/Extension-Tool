@@ -251,7 +251,8 @@ if (window.AIExt.__sessionRecorderLoaded) {
       log.info("Session Recorder (simple) ready.");
     },
     recordNow: (opts = {}) => {
-      const debug = opts.debug ?? window.AIExt.sessionRecorder.debug;
+      const debug = opts.debug ?? window.AIExt.sessionRecorder.debug; // AIExt.sessionRecorder.recordNow({ debug: true, echoRow: true });
+
       const echoRow = !!opts.echoRow;
       log.info("[recordNow] Manual capture → append.", { debug, echoRow });
       return captureAndAppend({ debug, echoRow });
