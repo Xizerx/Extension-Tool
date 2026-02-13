@@ -10,17 +10,18 @@ window.AIExt = window.AIExt || {};
   // React bundle root exists on this page; we scan within it.
   const ROOT_SELECTOR = "#Cnt_reactRepairOrderBundle";
 
-  // NOTE: Your earlier selector pointed at a specific Typography span.
-  // Instead of hard-coding the entire chain (brittle), we scan Typography body2 nodes
-  // inside the React root and parse currency from them.
+  // Scan Typography nodes inside the React root and parse currency from them.
   const MONEY_NODE_SELECTOR = `${ROOT_SELECTOR} span.MuiTypography-root`;
 
   const INPUT_ERROR_MESSAGE =
     "It appears this dollar amount was entered in error, please review and adjust the dollar amount and resubmit. Thank you.";
 
   // Visual theme (match replacementGuard vibe)
-  const THEME_COLOR = "#F59E0B"; // amber, same as replacementGuard example
+  const THEME_COLOR = "#F59E0B";
   const OVERLAY_ID = "aiext-high-dollar-reject-overlay";
+
+  // NEW: reliable selector for Cost Saving checkbox
+  const COST_SAVING_SELECTOR = "#isCostSaving";
 
   let didLogInit = false;
   let didLogDetection = false;
@@ -39,6 +40,7 @@ window.AIExt = window.AIExt || {};
       rootPresent: !!document.querySelector(ROOT_SELECTOR),
       moneySelector: MONEY_NODE_SELECTOR,
       threshold: HIGH_DOLLAR_THRESHOLD,
+      costSavingSelector: COST_SAVING_SELECTOR,
     });
     didLogInit = true;
   }
@@ -61,7 +63,7 @@ window.AIExt = window.AIExt || {};
       enabled: true,
       detectedTotalCost: ctx?.totalCost ?? null,
       detectedRawText: ctx?.rawText ?? null,
-      agentSelection, // "Input Error" | "Valid"
+      agentSelection, // "Invalid" | "Valid"
     });
     didLogSummary = true;
   }
@@ -72,13 +74,10 @@ window.AIExt = window.AIExt || {};
 
   function parseCurrency(text) {
     if (!text) return 0;
-    // handles "$40,000.00", "CA$ 40,000.00", etc.
     const n = parseFloat(String(text).replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? n : 0;
   }
 
-  // Scan likely money nodes and return the *highest* value we see (or first over threshold).
-  // This is intentionally robust against layout changes.
   function detectHighDollarLineItem() {
     const root = document.querySelector(ROOT_SELECTOR);
     if (!root) {
@@ -98,7 +97,6 @@ window.AIExt = window.AIExt || {};
       const nodeText = (node.innerText || node.textContent || "").trim();
       if (!nodeText) continue;
 
-      // Quick filter: must contain $ to reduce false parses
       if (!/\$/.test(nodeText) && !/CA\$/i.test(nodeText)) continue;
 
       const value = parseCurrency(nodeText);
@@ -114,17 +112,20 @@ window.AIExt = window.AIExt || {};
     }
 
     if (best && best.totalCost > HIGH_DOLLAR_THRESHOLD) return best;
-
     return null;
   }
 
   function getRejectReasonSelect() {
-    // Keep simple; your rejection form uses a select.
     return document.querySelector("select");
   }
 
   function getNotesTextarea() {
     return document.querySelector("textarea");
+  }
+
+  // NEW: direct lookup for Cost Saving checkbox
+  function getCostSavingCheckbox() {
+    return document.querySelector(COST_SAVING_SELECTOR);
   }
 
   function removeOverlay() {
@@ -133,11 +134,10 @@ window.AIExt = window.AIExt || {};
   }
 
   /* ============================
-     Overlay UI (match replacementGuard)
-     Based on createOverlay styling pattern. :contentReference[oaicite:1]{index=1}
+     Overlay UI
   ============================ */
 
-  function createOverlay({ title, lines, onValid, onInputError }) {
+  function createOverlay({ title, lines, onValid, onInvalid }) {
     removeOverlay();
 
     const overlay = document.createElement("div");
@@ -223,10 +223,10 @@ window.AIExt = window.AIExt || {};
       minWidth: "140px",
     });
 
-    const btnInput = document.createElement("button");
-    btnInput.type = "button";
-    btnInput.textContent = "Input Error";
-    Object.assign(btnInput.style, {
+    const btnInvalid = document.createElement("button");
+    btnInvalid.type = "button";
+    btnInvalid.textContent = "Invalid";
+    Object.assign(btnInvalid.style, {
       backgroundColor: THEME_COLOR,
       color: "white",
       fontSize: "18px",
@@ -243,13 +243,13 @@ window.AIExt = window.AIExt || {};
       try { overlay.remove(); } catch (_) {}
     });
 
-    btnInput.addEventListener("click", () => {
-      try { onInputError && onInputError(); } catch (_) {}
+    btnInvalid.addEventListener("click", () => {
+      try { onInvalid && onInvalid(); } catch (_) {}
       try { overlay.remove(); } catch (_) {}
     });
 
     btnRow.appendChild(btnValid);
-    btnRow.appendChild(btnInput);
+    btnRow.appendChild(btnInvalid);
 
     panel.appendChild(iconWrap);
     panel.appendChild(h1);
@@ -257,7 +257,6 @@ window.AIExt = window.AIExt || {};
     panel.appendChild(btnRow);
     overlay.appendChild(panel);
 
-    // Click outside panel does nothing (intentional, like a blocking modal)
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) {
         // no-op
@@ -268,12 +267,13 @@ window.AIExt = window.AIExt || {};
   }
 
   /* ============================
-     Input Error Automation
+     Invalid Automation
   ============================ */
 
-  function applyInputError() {
+  function applyInvalid() {
     const reason = getRejectReasonSelect();
     const notes = getNotesTextarea();
+    const costSaving = getCostSavingCheckbox();
 
     if (reason) {
       const opt = Array.from(reason.options || []).find(
@@ -296,7 +296,31 @@ window.AIExt = window.AIExt || {};
       console.warn(`[${FEATURE}]`, { reason: "Notes <textarea> not found" });
     }
 
-    console.log(`[${FEATURE}]`, { inputErrorApplied: true });
+    // IMPORTANT: uncheck Cost Saving reliably
+    if (costSaving) {
+      const wasChecked = !!costSaving.checked;
+
+      // Prefer click() if currently checked, to ensure any handlers run.
+      if (wasChecked) {
+        costSaving.click();
+      }
+
+      // Hard-set as a backstop, then emit events (some UIs depend on these).
+      costSaving.checked = false;
+      costSaving.dispatchEvent(new Event("change", { bubbles: true }));
+      costSaving.dispatchEvent(new Event("input", { bubbles: true }));
+
+      console.log(`[${FEATURE}]`, {
+        costSaving: { selector: COST_SAVING_SELECTOR, wasChecked, nowChecked: !!costSaving.checked },
+      });
+    } else {
+      console.warn(`[${FEATURE}]`, {
+        reason: "Cost Saving checkbox not found",
+        selector: COST_SAVING_SELECTOR,
+      });
+    }
+
+    console.log(`[${FEATURE}]`, { invalidApplied: true });
   }
 
   /* ============================
@@ -322,7 +346,6 @@ window.AIExt = window.AIExt || {};
 
     if (!RO_URL_RE.test(location.href)) return;
 
-    // Allow UI to render rejection UI (if it opens) before scanning.
     setTimeout(() => {
       const ctx = detectHighDollarLineItem();
       logDetectionOnce(ctx);
@@ -337,15 +360,15 @@ window.AIExt = window.AIExt || {};
         lines: [
           `You are rejecting a line item over <b>$20,000</b>.`,
           `Detected amount: <b>${ctx.rawText}</b>.`,
-          `If this is due to an input error or another reason that would disqualify it from being a legitimate cost savings to the client, click <b>Input Error</b>.`,
+          `If this is invalid due to an input error or another reason that would disqualify it from being a legitimate cost savings to the client, click <b>Invalid</b>.`,
           `If it is a valid cost savings, click <b>Valid</b>.`,
         ],
         onValid: () => {
           logSummaryOnce("Valid", ctx);
         },
-        onInputError: () => {
-          applyInputError();
-          logSummaryOnce("Input Error", ctx);
+        onInvalid: () => {
+          applyInvalid();
+          logSummaryOnce("Invalid", ctx);
         },
       });
     }, 350);
