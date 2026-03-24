@@ -154,7 +154,7 @@ if (window.AIExt.__sessionRecorderLoaded) {
         window.AIExt.vehiclePolicyTracker?.getSnapshot?.() ||
         window.AIExt.vehiclePolicy?.getSnapshot?.() ||
         {};
-
+      const replacementGuard = window.AIExt.replacementGuard?.getSnapshot?.() || {};
 
       const row = {
         timestamp: new Date().toISOString(),
@@ -197,6 +197,12 @@ if (window.AIExt.__sessionRecorderLoaded) {
           vehiclePolicy.hover_ms != null ? vehiclePolicy.hover_ms / 1000 : null,
         vehicle_policy_scroll_top: vehiclePolicy.scroll_top ?? null, // How deep did the agent scroll
         vehicle_policy_max_scroll_top: vehiclePolicy.max_scroll_top ?? null, // How deep is the element itself
+
+        // --------------------------------------------------------------------
+        // NEW: Repair Order Status Tracker metrics
+        // --------------------------------------------------------------------
+        ro_status: replacementGuard.status || "",
+        replacement_tab_visited: replacementGuard.replacementTabVisited ?? null,
       };
 
 
