@@ -31,8 +31,9 @@ window.AIExt = window.AIExt || {};
   // "9500" (no prefix) -> "" (we require prefix per your requirement)
   function normalizeClientCode(raw) {
     const t = String(raw || "").toUpperCase();
-    const m = t.match(/\b(FA|CA)\s*[-:]?\s*(\d{3,})\b/);
+    const m = t.match(/\b(FA|CA)\s*[-:]?\s*([A-Z0-9]{3,})\b/);
     return m ? `${m[1]}${m[2]}` : "";
+
   }
 
   function getCurrentRoKey() {
@@ -88,7 +89,7 @@ window.AIExt = window.AIExt || {};
   function parseClient(panel) {
     const text = panel?.innerText || "";
     const m = text.match(
-      /corp\s*\/\s*client\s*number[\s\S]{0,120}?((?:FA|CA)\s*[-:\s]*\d{3,})/i
+    /corp\s*\/\s*client\s*number[\s\S]{0,120}?((?:FA|CA)\s*[-:\s]*[A-Z0-9]{3,})/i
     );
     if (!m) return "";
 

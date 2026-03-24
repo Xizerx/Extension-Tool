@@ -15,7 +15,7 @@ window.AIExt = window.AIExt || {};
     READY_RETRY_EVERY_MS: 350,      // poll interval while waiting for client code
     READY_TIMEOUT_MS: 15000,        // give up waiting after this long (still attaches click handler)
 
-    TARGET_CLIENT_NUMBER: "FA9500",
+    TARGET_CLIENT_NUMBER: "CAC227",
     REQUIRED_AUTH_STATUS: "Approved - Requires RO Approval",
 
     // Optional legacy selector (leave blank if unstable)
