@@ -154,7 +154,7 @@ if (window.AIExt.__sessionRecorderLoaded) {
         window.AIExt.vehiclePolicyTracker?.getSnapshot?.() ||
         window.AIExt.vehiclePolicy?.getSnapshot?.() ||
         {};
-
+      const repairOrderStatus = window.AIExt.repairOrderStatusTracker?.getSnapshot?.() || {};
 
       const row = {
         timestamp: new Date().toISOString(),
@@ -197,6 +197,8 @@ if (window.AIExt.__sessionRecorderLoaded) {
           vehiclePolicy.hover_ms != null ? vehiclePolicy.hover_ms / 1000 : null,
         vehicle_policy_scroll_top: vehiclePolicy.scroll_top ?? null, // How deep did the agent scroll
         vehicle_policy_max_scroll_top: vehiclePolicy.max_scroll_top ?? null, // How deep is the element itself
+
+        ro_status: repairOrderStatus.repair_order_status || null,
       };
 
 

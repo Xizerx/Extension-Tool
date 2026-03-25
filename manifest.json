@@ -33,6 +33,7 @@
         "content/similarRepairOrdersTracker.js",
         "content/highDollarReject.js",
         "content/fedexGuard.js",
+        "content/repairOrderStatusTracker.js",
         "content/main.js"
       ],
       "run_at": "document_idle",

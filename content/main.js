@@ -91,8 +91,8 @@
 
   // SPA hooks: re-evaluate on route or DOM changes
   mountSpaHooks(
-    () => { invalidateApprovalCache(); hoverTracker.refresh(); AIExt.notesTracker.refresh(); },
-    () => { invalidateApprovalCache(); hoverTracker.refresh(); AIExt.notesTracker.refresh(); }
+    () => { invalidateApprovalCache(); hoverTracker.refresh(); AIExt.notesTracker.refresh(); AIExt.repairOrderStatusTracker?.refresh?.(); },
+    () => { invalidateApprovalCache(); hoverTracker.refresh(); AIExt.notesTracker.refresh(); AIExt.repairOrderStatusTracker?.refresh?.(); }
   );
 
   // Expose current state for popup → content messages
@@ -129,6 +129,7 @@
   AIExt.replacementGuard.init();
   AIExt.canadaGoogleParts.init();
   AIExt.clientInfoLinker?.init?.();
+  AIExt.repairOrderStatusTracker?.init?.();
   AIExt.partCostTracker.init();
   AIExt.laborHrsTracker.init();
   AIExt.vehiclePolicyTracker.init();
